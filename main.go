@@ -1,52 +1,43 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
+	"log"
+	"os"
 
 	"github.com/micro/go-micro"
-	pb "github.com/nicholassmith/consigment-vessel/proto/vessel"
+	pb "github.com/nicholassmith/consignment-vessel/proto/vessel"
 )
 
-type Repository interface {
-	FindAvailable(*pb.Specification) (*pb.Vessel, error)
-}
-
-type VesselRepository struct {
-	vessels []*pb.Vessel
-}
-
-func (repo *VesselRepository) FindAvailable(spec *pb.Specification) (*pb.Vessel, error) {
-	for _, vessel := range repo.vessels {
-		if spec.Capacity <= vessel.Capacity && spec.MaxWeight <= vessel.MaxWeight {
-			return vessel, nil
-		}
-	}
-	return nil, errors.New("No vessel found by that spec")
-}
-
-type service struct {
-	repo repository
-}
+const (
+	defaultHost = "datastore:27017"
+)
 
 func main() {
-	vessels := []*pb.Vessel{
-		&pb.Vessel{
-			Id:        "vessel0001",
-			Name:      "Boaty McBoatface",
-			MaxWeight: 200000,
-			Capacity:  500,
-		},
-	}
-	repo := &VesselRepository{vessels}
-
 	srv := micro.NewService(
-		micro.Name("shippy.service.vessel"),
+		micro.Name("vessel.service"),
 	)
 
 	srv.Init()
 
-	pb.RegisterVesselServiceHandler(srv.Server(), &service{repo})
+	uri := os.Getenv("DB_HOST")
+	if uri == "" {
+		uri = defaultHost
+	}
+
+	client, err := CreateClient(context.Background(), uri, 0)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer client.Disconnect(context.Background())
+
+	vesselCollection := client.Database("shippy").Collection("vessels")
+
+	repository := &VesselRepository{vesselCollection}
+	h := &handler{repository}
+
+	pb.RegisterVesselServiceHandler(srv.Server(), h)
 
 	if err := srv.Run(); err != nil {
 		fmt.Println(err)
